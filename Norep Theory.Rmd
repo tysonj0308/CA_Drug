@@ -1,0 +1,269 @@
+---
+title: "CA_Drug_Study"
+author: "Tyson Jones"
+date: "2024-01-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library("tidyverse")
+library("readxl")
+library("moderndive")
+library("corrplot")
+id = "19Jo2mO7wHqX_g5dWdSSSV6hh1YN2TAAo"
+CA_drug <- read.csv(sprintf("https://docs.google.com/uc?id=%s&export=download", id))
+rm(id)
+
+library(googledrive)
+
+
+
+```
+## First we will select users of drugs that affect NE levels.
+### We are also going to determine chronic use by multiplying years * frequency.
+### We will also separate users from nonusers for this set of analyses.
+```{r}
+#Splitting PRMQ by P and R
+P_columns <- c("PRMQ_1","PRMQ_3","PRMQ_5","PRMQ_7","PRMQ_10","PRMQ_12","PRMQ_14","PRMQ_16")  
+
+CA_drug <- CA_drug %>%
+  mutate(Avg_PMQ = rowMeans(select(., all_of(P_columns)), na.rm = TRUE),.after = Avg_PRMQ)
+
+R_columns <- c("PRMQ_2","PRMQ_4","PRMQ_6","PRMQ_8","PRMQ_9","PRMQ_11","PRMQ_13","PRMQ_15") 
+
+CA_drug <- CA_drug %>%
+  mutate(Avg_RMQ = rowMeans(select(., all_of(R_columns)), na.rm = TRUE),.after = Avg_PMQ)
+
+rm(P_columns,R_columns)
+```
+
+```{r Selection, message=FALSE}
+CA_nonusers <- CA_drug %>% 
+  filter(user_nonuser == 1)
+
+CA_users <- CA_drug %>%
+  filter(user_nonuser == 2) %>% 
+  mutate(NE_yn = if_else(MDMA_yn == 2 | coc_yn == 2 | meth_yn == 2,2,1,)) %>% 
+  mutate(NE_yn = factor(NE_yn, levels = c(1, 2))) %>% 
+  mutate(Avg_use = Avg_freq * Avg_totalyrs, .after = Avg_freq)
+  
+```
+
+# Plot Time!
+
+## As we can see, MDMA use in this group is moderately positively correlated with Cocaine and Meth use.
+
+```{r Corr Plot, echo=FALSE}
+CA_corr_yn <- CA_users %>%
+  select(24:32) %>%
+  cor()
+  col <- colorRampPalette(c("#BB4444", "#EE9988", "#FFFFFF", "#77AADD", "#4477AA"))
+  corrplot(CA_corr_yn, method = "shade", shade.col = NA, tl.col = "black", tl.srt = 45,col = col(200), addCoef.col = "black", cl.pos = "n", order = "AOE")
+
+```
+
+## This plot shows some funky-ness in PRMQ. Let's see if it's statistically significant
+
+```{r , echo=FALSE}
+CA_users %>%
+  ggplot(aes(x= Avg_PRMQ, fill = NE_yn)) +
+  geom_histogram(binwidth = .5) +
+  facet_wrap(~ NE_yn, scales = "free_y")
+
+```
+
+```{r}
+# Check the variances
+variances <- tapply(CA_users$Avg_PRMQ, CA_users$NE_yn, var, na.rm = TRUE)
+print(variances)
+rm(variances)
+# Looks good now let's run a t test
+NE_ttest <- t.test(CA_users$Avg_PRMQ ~ CA_users$NE_yn)
+print(NE_ttest)
+rm(NE_ttest)
+```
+
+### Seems significant, now let's ask Mr Cohen what he thinks.
+
+```{r}
+NE_user <- CA_users$Avg_PRMQ[CA_users$NE_yn == 2]
+NE_nonuser <- CA_users$Avg_PRMQ[CA_users$NE_yn == 1]
+
+cohens_d <- (mean(NE_user) - mean(NE_nonuser)) / sqrt((sd(NE_user)^2 + sd(NE_nonuser)^2) / 2)
+
+print(cohens_d)
+```
+
+## Rule of thumb says this is a small-moderate effect, which is still exciting!
+
+
+## Now to check to see if "Norepinephrine users" had any other major differences on their scores.
+ 
+```{r echo=FALSE}
+perform_analysis <- function(data, variable_name, group_variable) {
+  # Check the variances
+  variances <- tapply(data[[variable_name]], data[[group_variable]], var, na.rm = TRUE)
+  cat("Variances for", variable_name, ":\n", variances, "\n\n")
+
+  # Run a t-test
+  t_test_result <- t.test(data[[variable_name]] ~ data[[group_variable]])
+  cat("T-test result for", variable_name, ":\n")
+  print(t_test_result)
+  cat("\n")
+
+  # Calculate Cohen's d
+  group1_data <- data[[variable_name]][data[[group_variable]] == levels(data[[group_variable]])[1]]
+  group2_data <- data[[variable_name]][data[[group_variable]] == levels(data[[group_variable]])[2]]
+  cohens_d <- (mean(group1_data) - mean(group2_data)) / sqrt((sd(group1_data)^2 + sd(group2_data)^2) / 2)
+  cat("Cohen's d for", variable_name, ":\n", cohens_d, "\n\n")
+}
+
+perform_analysis(CA_users, "Avg_PRMQ", "NE_yn")
+
+perform_analysis(CA_users, "Avg_MI_EO", "NE_yn")
+
+perform_analysis(CA_users, "Avg_MI_EC", "NE_yn")
+
+perform_analysis(CA_users, "Avg_RTDT", "NE_yn")
+
+perform_analysis(CA_users, "Avg_SC", "NE_yn")
+
+perform_analysis(CA_users, "Avg_EQ", "NE_yn")
+
+rm(cohens_d,NE_nonuser,NE_user)
+
+```
+
+## It looks like PRMQ and RTDT are the only two variables with statistically significant (p < .001 and p < .01 respectively) differences. Both have an effect size ~ .3 which is pretty solid!
+## Let's see a graph for RTDT
+```{r echo=FALSE}
+CA_users %>%
+  ggplot(aes(x= Avg_RTDT, fill = NE_yn)) +
+  geom_histogram(binwidth = .5) +
+  facet_wrap(~ NE_yn, scales = "free_y")
+
+```
+
+## Are there any differences between Norep users and other users?
+
+```{r}
+CA_users2 <- CA_users %>% 
+  group_by(NE_yn)
+
+CA_users2 %>% 
+  ggplot(aes(x=Num_drugs, fill = NE_yn)) +
+  geom_bar() + 
+  facet_wrap(~ NE_yn, scales = "free")
+
+```
+
+Does safety of drug use affect the AC measures?
+
+```{r Safety}
+
+# File ID of the file you want to download
+file_id <- "1_JoIgShPFobwutggd1DS78142vuDPpdD"
+drive_download(as_id(file_id), overwrite = T)
+
+CA_Safety <-
+
+CA_Safety <- CA_Safety %>% 
+  mutate_all(as.numeric) %>% 
+  left_join(CA_users, CA_Safety, by = "IDNUM")
+
+# Selecting all the drug risk questions
+columns_to_sum <- c(2,4,6,8,10,12,14,16,18)  
+
+CA_Safety <- CA_Safety %>%
+  mutate(Abuse_Risk = rowSums(select(., columns_to_sum), na.rm = TRUE)) 
+
+rm(columns_to_sum)
+
+CA_Safety %>% 
+  ggplot(aes(x = Abuse_Risk, y = Avg_PRMQ)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  facet_wrap(~ NE_yn, scales = "free_x") 
+
+
+Safety_model <- lm(CA_Safety$Avg_PRMQ ~ CA_Safety$Abuse_Risk)
+get_regression_table(Safety_model)
+
+correlation <- cor.test(CA_Safety$Avg_PRMQ, CA_Safety$Abuse_Risk)
+correlation
+```
+
+```{r}
+# Z test for users vs nonusers PRMQ
+Z_StatUsers <- ((mean(CA_users$Avg_PRMQ) - mean(CA_nonusers$Avg_PRMQ)) /
+             sd(CA_users$Avg_PRMQ / sqrt(nrow(CA_users))))
+pt(Z_StatUsers, (nrow(CA_users)-1),lower.tail = F)
+
+```
+
+```{r Z Test}
+# Z test for NE users vs NE nonusers PRMQ
+CA_NE_use <- CA_users %>% 
+  filter(NE_yn == 2)
+CA_NE_non <- CA_users %>% 
+  filter(NE_yn == 1)
+#Not significant really
+
+Z_StatNE <- ((mean(CA_NE_use$Avg_PRMQ) - mean(CA_NE_non$Avg_PRMQ)) /
+             sd(CA_NE_use$Avg_PRMQ / sqrt(nrow(CA_NE_use))))
+NE_p <- pt(Z_StatNE, (nrow(CA_NE_use)-1), lower.tail = F)
+# significant!
+
+# Z tests for PMQ and RMQ for NE users vs NE nonusers
+Z_StatPMQ <- ((mean(CA_NE_use$Avg_PMQ) - mean(CA_NE_non$Avg_PMQ)) /
+             sd(CA_NE_use$Avg_PMQ / sqrt(nrow(CA_NE_use))))
+PMQ_p <- pt(Z_StatPMQ, (nrow(CA_NE_use)-1), lower.tail = F)
+PMQ_p
+# significant!
+
+Z_StatRMQ <- ((mean(CA_NE_use$Avg_RMQ) - mean(CA_NE_non$Avg_RMQ)) /
+             sd(CA_NE_use$Avg_RMQ / sqrt(nrow(CA_NE_use))))
+RMQ_p <- pt(Z_StatRMQ, (nrow(CA_NE_use)-1), lower.tail = F)
+RMQ_p
+# significant!
+
+# Z test for risk factors between NE users and NE nonusers
+CA_Risk_NEuse <- CA_Safety %>% 
+  filter(NE_yn == 2)
+CA_Risk_NEnon <- CA_Safety %>% 
+  filter(NE_yn == 1)
+
+Z_StatRisk <- ((mean(CA_Risk_NEuse$Abuse_Risk) - mean(CA_Risk_NEnon$Abuse_Risk)) / sd(CA_Risk_NEuse$Abuse_Risk / sqrt(nrow(CA_Risk_NEuse))))
+
+risk_p <- pt(Z_StatRisk, (nrow(CA_Risk_NEuse)-1), lower.tail = F)
+```
+
+```{r Hist PMQ + RMQ + Risk}
+CA_users %>% 
+  ggplot(aes(x = Avg_PMQ, fill = NE_yn)) +
+  geom_histogram(position = "identity", alpha = 0.5, bins = 30, aes(y = ..density..)) +
+  scale_fill_manual(values = c("blue", "red")) +
+  theme_minimal()
+
+CA_users %>% 
+  ggplot(aes(x = Avg_RMQ, fill = NE_yn)) +
+  geom_histogram(position = "identity", alpha = 0.5, bins = 25, aes(y = ..density..)) +
+  scale_fill_manual(values = c("blue", "red")) +
+  theme_minimal()
+
+CA_Safety_filtered <- CA_Safety[complete.cases(CA_Safety$NE_yn), ]
+
+CA_Safety_filtered %>% 
+  ggplot(aes(x = Abuse_Risk, fill = NE_yn)) +
+  geom_histogram(position = "identity", alpha = 0.5, bins = 30, aes(y = ..density..)) +
+  theme_minimal()
+rm (CA_Safety_filtered)
+
+```
+
+```{r Abuse_Risk Regression}
+
+abuse_model <- lm(Avg_PRMQ ~ Abuse_Risk + num_drugs, data = CA_users)
+
+```
+
