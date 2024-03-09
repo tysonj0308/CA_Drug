@@ -1,0 +1,139 @@
+---
+title: "Cognitive Ability and Drug Use"
+author: "Xavier Celaya"
+date: "2023-08-23"
+output: html_document
+---
+# Read the relevant packages in.
+```{r packages}
+library(readr)
+library(dplyr)
+library(lavaan)
+```
+
+# Demographics 
+## Data cleaning and wrangling.
+### Mistakes were made on the front end (by me), so just doubling back for ease of understanding by portion of data collected. 
+```{r demographics}
+
+
+
+```
+
+
+
+## Clean up the data looking at drug use.
+### Mostly minor stuff just to get it in shape for merging. More data wrangling will be required later to get meaningful interpretations of the data.
+```{r read in}
+# Read in data
+DUH <- read_csv("/Users/xcelaya/Desktop/Research/0.Fall 2021/CA Drug/Data & Analyses/drug_quest_raw_final.csv")
+
+#Pull out the relevant columns/variables of interest.
+DUH <- DUH[c(1,10:92)]
+
+# Mutate the data for ease of understanding the binary yes/no to substance data, complete quick back-end fix for MJ_freq where the response labels were a bit off, and generate DAST risk scores using the NIH scoring guide. 
+DU <- DUH %>%
+  mutate(Marijuana = MJ_yn - 1,
+         Alcohol = Alc_yn - 1,
+         MDMA = MDMA_yn - 1,
+         Cocaine = coc_yn - 1,
+         Methamphetamine = meth_yn - 1,
+         Psychedelic = psych_yn - 1,
+         Dissociative = diss_yn - 1,
+         Inhalant = inhal_yn - 1,
+         Tranquilizer = Tranq_yn - 1,
+         Opiate = her_yn - 1,
+         MJ_freq = case_when(MJ_freq == 1 ~ 2,
+                             MJ_freq == 2 ~ 3,
+                             MJ_freq == 3 ~ 4,
+                             MJ_freq == 4 ~ 5,
+                             MJ_freq == 6 ~ 7,
+                             MJ_freq == 7 ~ 8,
+                             MJ_freq == 8 ~ 1),
+         ##Drug use Questionnaire (DAST-NIH) 
+#involvement with drugs not including alcoholic beverages during the past 12 months.
+#10 items, y/n where yes = 1 point
+  #0 = no risk
+  #1-2 = Low (risky) level
+  #3-5 = Moderate (harmful) level
+  #6+ = Severe risk
+         dast_sum = abuse_nonmed + abuse_multiple + abuse_stop +
+                    abuse_blackout + abuse_guilt + abuse_complain +
+                    abuse_neglect + abuse_obtain + abuse_withdrawal + abuse_problem)%>%
+  mutate(dast_risk = case_when(dast_sum == 0 ~ 1,
+                               dast_sum == 1 ~ 2,
+                               dast_sum == 2 ~ 2,
+                               dast_sum == 3 ~ 3,
+                               dast_sum == 4 ~ 3,
+                               dast_sum == 5 ~ 3,
+                               dast_sum == 6 ~ 4,
+                               dast_sum == 7 ~ 4,
+                               dast_sum == 8 ~ 4,
+                               dast_sum == 9 ~ 4,
+                               dast_sum == 10 ~ 4))
+
+#Create new total number of years of use column: age of first use - current age 
+#remove outliers
+
+```
+
+## Quick mutations for ease of analysis in JASP
+``` {r}
+# Read in cognitive ability data
+ca <- read_csv("/Users/xcelaya/Desktop/Research/0.Fall 2021/CA Drug/Data & Analyses/all_data.csv")
+
+#Calcualte sum scores for the Span Tasks
+ca <- ca %>%
+  mutate(wmc_sum = ospan+symspan+rspan)
+
+# Rename 'IDNUM' to 'subject' for smooth merging of data sets.
+DU <- rename(DU, subject = IDNUM)
+
+#Merge em!
+ca_drug <- merge(DU, ca, by = "subject")
+
+# Create a CSV of the merged data that can be either loaded by in for further analysis or to load it in a different software.
+write_csv(ca_drug, "/Users/xcelaya/Desktop/Research/0.Fall 2021/CA Drug/Data & Analyses/ca_drug_merge.csv")
+
+
+#clean the mj_freq measure; 
+```
+
+## Create Factor scores based on the known/hypothesized cognitive constructs they belong to.
+
+### First, standardize each DV to get z-scores, then average those z-scores within a factor. This skirts the issue of using the model-fitted covariance matrix.
+``` {r factor validation 2 - revenge of Lavaan}
+#read in cognitive ability data
+ca <- read_csv("/Users/xcelaya/Desktop/Research/0.Fall 2021/CA Drug/Data & Analyses/all_data.csv")
+
+# Designate columns of interest
+cols_of_interest <- c(2, 4, 5, 6, 8:11, 15, 18:21)
+
+# Calculate Z-scores for variables of the interest.
+ca[, cols_of_interest] <- scale(ca[, cols_of_interest])
+
+# Average by construct for each participant.
+## I am unsure if this process will provide the information I am attempting to investigate. This now assumes
+ca_factor <- ca %>%
+  group_by(subject) %>%
+  mutate(WMC_factor = mean(ospan + rspan + symspan),
+         AC_factor = sum(antisaccade + pvt_bin5 + fa_rate),
+         EM_factor = sum(dfr + pa + psr),
+         iG_factor = sum(raven + ls + ns))
+
+# Rip out composite scores composed of aggregated Z-scores
+ca_composite<- ca_factor[c(1,23:26)]
+
+# Read in the original data yet again
+ca_clean <- read_csv("/Users/xcelaya/Desktop/Research/0.Fall 2021/CA Drug/Data & Analyses/all_data.csv")
+
+
+# Then merge those with the raw data in order to validate.
+ca_validation <- merge(ca_composite, ca_clean, by = 'subject')
+
+# Write into a new CSV to be ported over to JASP
+write_csv(ca_validation, "/Users/xcelaya/Desktop/Research/0.Fall 2021/CA Drug/Data & Analyses/ca_validation.csv")
+```
+# JASP time 
+## Now with the new construct composite z-scores, work half as hard and open that CSV with jasp to validate that the composite 'factor' scores are correlated with the tasks that fed into them, as well as with each other (WMC, AC, EM, iG).
+
